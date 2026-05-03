@@ -1,181 +1,130 @@
-# This file contains utility functions. You mostly do not want to touch this file.
-
-from datetime import timedelta, datetime
-from pyomo.opt import SolverFactory
-from pyomo.opt import ProblemFormat
+from pyomo.environ import SolverFactory, SolverStatus
+from datetime import timedelta
 import pandas as pd
-from parameters import RESOLUTION_IN_MINUTES,INVERTER_UNIT_CAPACITY,STORAGE_UNIT_CAPACITY, N_PERIODS 
-from parameters import EV_CAPACITY, EV_TARGET_SOC, USE_EV, GRID_CONNECTED, SIZING
-import matplotlib.pyplot as plt
 import numpy as np
+from param import *
+
+def check_res(res):
+    eps = 1e-3  # 1 W or .1% error tolerance
+    for t in range(len(res.t)):
+        0=0
+        # TODO: Make a function that test if the physical constraitns are indead respected
+    return
+
+def print_res(res):
+    # TODO: Make a function to print a summary of the results
+    return
+
+def print_sizing_results(res):
+    # TODO: Add a print with additional info specific to part 2
+    return
 
 
-from pyomo.core.kernel import value
 
-class SizingData():
-    def __init__(self, start_date=datetime(2020, 3, 1, 0, 0, 0), scen=0, yearly_cons=0):
-        """
-        :param start_date: The start date you want to consider for sizing.
-        """
-        def date_parse(x): return datetime.strptime(
-            x, '%Y-%m-%d %H:%M:%S')  # Parsing function
-        
-        if SIZING:
-            # Columns are named "C" (consumption), "P" (production) and "EV" (electric vehicle)
-            data_df = pd.read_csv("HW4.CSV", index_col="DateTime",
-                                  parse_dates=True, date_parser=date_parse)
-        else:
-            data_df = pd.read_csv("Scenario"+str(scen)+".CSV", index_col="DateTime",
-                                  parse_dates=True, date_parser=date_parse)
+def plot_res(res):
+    #TODO: Make a nice looking plot function
+    return
 
-        self.data_df = data_df
-        self.yearly_cons = yearly_cons
-        
-    def consumption(self, p):
-        """
-        :param p: period index, starts at 1
-        :return: instantaneous power consumption [W]
-        """
-        datetime = self.data_df.index[0] + \
-            timedelta(hours=(p-1) * RESOLUTION_IN_MINUTES / 60)
-        # DEBUG print(datetime.strftime('%Y-%m-%d %H:%M:%S'))
-        if not SIZING: 
-            return self.data_df.loc[datetime]["load"]
-        else:
-            return self.data_df.loc[datetime]["load"] * self.yearly_cons * 60 / RESOLUTION_IN_MINUTES
+def solve_model(m, res):
+    # Solve the optimization problem
+    solver = SolverFactory('gurobi')
+    output = solver.solve(m)#, tee=True)  # Parameter 'tee=True' prints the solver output
 
-    def PV_generation(self, p):
-        """
-        :param p: period index, starts at 1
-        :return: PV generation per unit of capacity [W]
-        """
-        datetime = self.data_df.index[0] + \
-            timedelta(hours=(p-1) * RESOLUTION_IN_MINUTES / 60)
-        return self.data_df.loc[datetime]["PV"].clip(min=0)
-    
-    def EV_connected(self,p):
-        datetime = self.data_df.index[0] + \
-            timedelta(hours=(p-1) * RESOLUTION_IN_MINUTES / 60)
-        return 1 if self.data_df.loc[datetime]["EV"].clip(min=0) > 0 else 0
-    
-    def EV_profile(self,p):
-        datetime = self.data_df.index[0] + \
-            timedelta(hours=(p-1) * RESOLUTION_IN_MINUTES / 60)
-        return self.data_df.loc[datetime]["EV"].clip(min=0)
+    # Print elapsed time
+    status = output.solver.status
 
-
-def extract_EV_data(data, yearly_km=0):
-    n_connection = 0 
-    previous = False
-    #EV_connected = np.zeros(N_PERIODS)
-    EV_initial_SOC = []
-    t_arr = []
-    t_dep = []
-    for t in np.arange(1,N_PERIODS+1):
-        if previous == False and data.EV_profile(t) > 0:
-            n_connection += 1                                                   #Increase the number of connection
-            if SIZING:
-                k = yearly_km/5e3                                               # Default profile is for 5k km 
-                EV_initial_SOC.append(EV_TARGET_SOC-data.EV_profile(t)*k)       # EV_initial_SOC = target-energy_needed
-            else:
-                EV_initial_SOC.append(data.EV_profile(t))                       # EV_initial_SOC directly in the input file
-                
-            t_arr.append(t)
-            previous = True
-            #EV_connected[t-1] = 1
-        elif data.EV_profile(t) > 0 and previous == True:
-            #EV_connected[t-1] = 1
-            if t == N_PERIODS: t_dep.append(t)
-        elif data.EV_profile(t) == 0 and previous == True:
-            t_dep.append(t)
-            previous = False
-        elif previous == False and data.EV_profile(t) == 0:
-            previous = False
-        else:
-            print(t, " EXTRACTION ERROR")             
-    
-    return EV_initial_SOC, t_arr, t_dep 
-
-def configure_solver(model, solver_name="gurobi"):
-    """
-    :param model: the model to be solved
-    :param solver_name: solver name as a string
-    :return: a configured pyomo solver object
-    """
-    opt = SolverFactory('gurobi_persistent')
-    opt.set_instance(model)
-    return opt
-
-
-def export_model(model):
-    """
-    :param model: Pyomo optimization model
-    :return: Nothing, dumps lp file sizing_opt.lp
-    """
-    model.write(filename="sizing_opt.lp",
-                format=ProblemFormat.cpxlp,
-                io_options={"symbolic_solver_labels": True})
- 
-import plotly.graph_objects as go   
-def plot_and_print(model, data, sizing=False, plot_soc=True):
-    delta_t=RESOLUTION_IN_MINUTES/60
-    conso = np.array([-data.consumption(p) for p in model.periods])
-    PV =  np.array([model.gen_PV_sp[p].value for p in model.periods])
-    steer =  np.array([model.steer_genset_sp[p].value for p in model.periods])
-    imp =  np.array([model.imp_grid[p].value for p in model.periods])
-    exp =  np.array([-model.exp_grid[p].value for p in model.periods])
-    charge =  np.array([-model.charge_storage_sp[p].value for p in model.periods])
-    discharge =  np.array([model.discharge_storage_sp[p].value for p in model.periods])
-    soc =  np.array([model.soc[p].value/(model.storage_energy_capacity_units.value * STORAGE_UNIT_CAPACITY) for p in model.periods])
-    if USE_EV:
-        EV_charge =  np.array([-model.charge_EV_sp[p].value for p in model.periods])
-        EV_discharge =  np.array([model.discharge_EV_sp[p].value for p in model.periods])
-        EV_soc =  np.array([model.EV_soc[p].value/EV_CAPACITY for p in model.periods])
-        
-    fig, ax1 = plt.subplots(1, 1, dpi=720)
-    if USE_EV:
-        ax1.stackplot(model.periods, conso,exp, charge, EV_charge, labels=['Consumption','Grid export', 'Battery charge', 'EV charge'])
-        ax1.stackplot(model.periods,PV,steer,imp,discharge,EV_discharge, labels=['PV','Genset','Grid import', 'Battery discharge', 'EV discharge'])
+    # Check the solution status
+    if status == SolverStatus.ok:
+        print("Simulation completed")
+        res = save_results(res, m)
+        res.save_sizing_results(m)
+        return m, res
+    elif status == SolverStatus.warning:
+        print("Solver finished with a warning.")
+    elif status == SolverStatus.error:
+        print("Solver encountered an error and did not converge.")
+    elif status == SolverStatus.aborted:
+        print("Solver was aborted before completing the optimization.")
     else:
-        ax1.stackplot(model.periods, conso,exp, charge, labels=['Consumption','Grid export', 'Battery charge'])
-        ax1.stackplot(model.periods,PV,steer,imp,discharge, labels=['PV','Genset','Grid import', 'Battery discharge'])
-    if USE_EV and plot_soc:
-        ax2 = ax1.twinx()
-        ax2.plot(model.periods, EV_soc, '.', markersize=2)
-        ax2.plot(model.periods, soc, '.', markersize=2)
-        ax2.set_ylabel('State of charge')
-    
+        print("Solver status unknown.")
+    return None, None
 
-    ax1.legend(fontsize='small',ncol=2)
+def update_model(model, res, SOC_0_bss, SOC_0_ev, T_0_hp):
+    for t in res.t:
+        model.P_load[t] = res.P_load[t]
+        model.P_pv_max[t] = res.P_pv_max[t]
+        model.EV_connected[t] = res.EV_connected[t]
+        model.t_arr[t] = res.t_arr[t]
+        model.t_dep[t] = res.t_dep[t]
+        model.SOC_i_ev[t] = res.SOC_i_ev[t]
+        model.T_set[t] = res.T_set[t]
+        model.P_loss[t] = res.P_loss[t]
+    model.SOC_0_bss = SOC_0_bss
+    model.SOC_0_ev = SOC_0_ev
+    model.T_0_hp = T_0_hp
 
-    if SIZING:
-        print("\nSizing decisions:")
-        print("  - Storage capacity: %d kWh"  % (
-            model.storage_energy_capacity_units.value * STORAGE_UNIT_CAPACITY/1e3))
-        print("  - Storage inverter capacity: %d kVA"  % (
-            model.storage_inverter_capacity_units.value * INVERTER_UNIT_CAPACITY/1e3))
-        print("  - PV capacity: %d kWp"  % (model.PV_capacity.value/1e3))
-        print("  - PV inverter capacity: %d kVA"  % (
-            model.PV_inverter_capacity_units.value * INVERTER_UNIT_CAPACITY/1e3))
-        print("  - Grid connection capacity: %d A"  % (
-            sum(o * model.grid_capacity[o].value for o in model.grid_capacity_options)))
-        print("  - Genset capacity: %d kVA"  % (
-            sum(o * model.genset_capacity[o].value for o in model.genset_capacity_options)/1e3))
-    
-    print("\nTotal negative energy (consumption):")
-    print("  - Base consumption: %d kWh" % (sum(conso)*delta_t/1e3))
-    if GRID_CONNECTED: print("  - Grid export: %d kWh" % (sum(exp)*delta_t/1e3))
-    print("  - Battery charge: %d kWh" % (sum(charge)*delta_t/1e3))
-    if USE_EV: print("  - EV charge: %d kWh" % (sum(EV_charge)*delta_t/1e3))
-    
-    
-    print("\nTotal positive energy (production):")
-    print("  - PV production: %d kWh" % (sum(PV)*delta_t/1e3))
-    print("  - Genset production: %d kWh" % (sum(steer)*delta_t/1e3))
-    if GRID_CONNECTED: print("  - Grid import: %d kWh" % (sum(imp)*delta_t/1e3))
-    print("  - Battery discharge: %d kWh"% (sum(discharge)*delta_t/1e3))
-    if USE_EV: print("  - EV discharge: %d kWh"% (sum(EV_discharge)*delta_t/1e3))
-    
-    print("\nCost for the considered period [€]: %d" %(value(model.obj)))
-    
-    return steer, PV, imp, exp , charge, discharge
+    return model
+
+class Results:
+    def __init__(self, start_time, n_days, yearly_kwh, yearly_km):
+        self.start_time = start_time 
+        self.t_s = int(n_days*24/delta_t)                # Total number of discrete time steps in the simulation
+        self.n_days = n_days
+        self.yearly_kwh = yearly_kwh
+        self.yearly_km = yearly_km
+        self.t = np.arange(0,self.t_s)
+
+        self.P_pv = np.zeros(self.t_s)
+        self.P_bss = np.zeros(self.t_s)
+        self.P_ev = np.zeros(self.t_s)
+        self.P_gen = np.zeros(self.t_s)
+        self.P_imp = np.zeros(self.t_s)
+        self.P_exp = np.zeros(self.t_s)
+
+        self.SOC_ev = np.zeros(self.t_s)
+        self.SOC_bss = np.zeros(self.t_s)
+
+        # Initialize SOCs
+        self.SOC_bss_i = 0.5          
+
+        # Load data from CSV files into pandas DataFrames
+        self.df = pd.read_csv('HW2.csv', delimiter=';', index_col="DateTime", parse_dates=True, date_format='%Y-%m-%d %H:%M:%S')#, date_parser=lambda x: datetime.strptime(x, '%Y-%m-%d %H:%M:%S'))
+        self.P_load = np.array([self.df.loc[self.start_time + timedelta(hours=t*delta_t)]["Load"].clip(min=0) * self.yearly_kwh for t in self.t])
+        self.P_pv_max = np.array([self.df.loc[self.start_time + timedelta(hours=t*delta_t)]["PV"].clip(min=0) for t in self.t])
+        self.EV_connected = np.array([self.df.loc[self.start_time + timedelta(hours=t*delta_t)]["EV"] for t in self.t])
+        self.P_loss = np.array([self.df.loc[self.start_time + timedelta(hours=t*delta_t)]["P_loss"] for t in self.t])
+        self.T_set = np.array([self.df.loc[self.start_time + timedelta(hours=t*delta_t)]["T_set"] for t in self.t])
+        self.datetime = [self.start_time + timedelta(hours=t*delta_t) for t in self.t]
+
+
+        self.SOC_i_ev = np.array([SOC_target_ev*C_ev - (self.EV_connected[t]*self.yearly_km) / (5e6) if self.EV_connected[t] > 0 and (t == 0 or self.EV_connected[t-1] == 0) else 0 for t in range(self.t_s)])
+        self.t_arr = np.array([1 if self.EV_connected[t] > 0 and (t == 0 or self.EV_connected[t-1] == 0) else 0 for t in range(self.t_s)])
+        self.t_dep = np.array([1 if self.EV_connected[t] == 0 and (t > 0 and self.EV_connected[t-1] > 0) else 0  for t in range(self.t_s)])
+        if self.EV_connected[-1] > 0: self.t_dep[-1] = 1
+        self.EV_connected = np.array([1 if self.EV_connected[t] > 0 else 0 for t in range(self.t_s)])
+
+    def save_sizing_results(self, m):
+        self.C_bss = m.C_bss.value
+        self.P_nom_bss = m.P_nom_bss.value
+        self.C_pv = m.C_pv.value
+        self.P_nom_pv = m.P_nom_pv.value
+        self.C_ev = m.C_ev.value
+        self.P_nom_ev = m.P_nom_ev.value
+        self.P_max_gen = m.P_max_gen.value
+
+
+def save_results(res, m):
+    res.P_imp = np.array([m.P_imp[t].value for t in m.periods])
+    res.P_exp = np.array([m.P_exp[t].value for t in m.periods])
+    res.P_pv = np.array([m.P_pv[t].value for t in m.periods])
+    res.P_bss = np.array([m.P_charge_bss[t].value - m.P_discharge_bss[t].value for t in m.periods])
+    res.P_ev = np.array([m.P_charge_ev[t].value - m.P_discharge_ev[t].value for t in m.periods])
+    res.P_gen = np.array([m.P_gen[t].value for t in m.periods])
+    res.P_hp_hot = np.array([m.P_hp_hot[t].value for t in m.periods])
+    res.P_hp_cold = np.array([m.P_hp_cold[t].value for t in m.periods])
+    res.T_hp = np.array([m.T_hp[t].value for t in m.periods])
+    res.SOC_ev = np.array([m.SOC_ev[t].value for t in m.periods])
+    res.SOC_bss = np.array([m.SOC_bss[t].value for t in m.periods])
+    res.objective = m.objective()
+    return res
+
