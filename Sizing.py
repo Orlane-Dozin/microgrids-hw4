@@ -66,11 +66,112 @@ def create_model(res):
     
     # Define the objective function ----------------------------------------------------------------------------
     model.objective = Objective(sense=minimize,
-                                expr=0)
+                                expr=sum((model.P_imp[t]*PI_imp + PI_gen* model.P_gen[t] - model.P_exp[t]*PI_exp) * delta_t
+                                for t in model.periods)) # Optimisation correspond à min consommation et max revenu
+    
+    
     
     #Constraints ---------------------------------------------------------------------------------------------------------------------------
+
+     
+    model.power_balance = Constraint(model.periods, rule= optimization ) # power in = power out
+
+
     
+    #battery
+    model.soc_bss = Constraint(model.periods, rule=soc_bss_cont) #conitnuity in charge and discharge of battery
+    model.soc_bss_min = Constraint(model.periods, rule= soc_ev_min_const) #stay higher than limit
+    model.soc_bss_max = Constraint(model.periods,rule=soc_bss_max_const )#stay lower than limit
+    model.charge_bss_limit= Constraint(model.periods, rule=charge_bss_limit_const ) #limite sur la vitesse de charge car onduleur
+    model.discharge_bss_limit = Constraint(model.periods,rule=discharge_bss_limit_const)#limite sur la vitesse de décharge car onduleur
+
+    
+    #pv
+    model.pv_limit = Constraint(model.periods,rule= pv_limit_const) #limite sur la puissance des pvs. 
+
+    #ev
+    model.soc_ev = Constraint(model.periods, rule= soc_ev_const) #conitnuity in charge and discharge of ev
+    model.soc_ev_min = Constraint(model.periods, rule= soc_ev_min_const) #stay higher than limit
+    model.soc_ev_max = Constraint(model.periods,rule=soc_ev_max_const )#stay lower than limit
+    model.ev_charge_ev_limit = Constraint(model.periods, rule=ev_charge_ev_limit_const) #limite sur la vitesse de charge
+    model.discharge_ev_limit = Constraint(model.periods, rule=discharge_ev_limit_const)#limite sur la vitesse de décharge
+    #model.arrival_ev = Constraint(model.periods, rule=model.SOC_ev[t] >= model.SOC_i_ev[t])
+    #model.ev_departure = Constraint(model.periods, rule=model.SOC_ev[t] >= SOC_target_ev*model.C_ev * model.t_dep[t])
+
+
+    #hp
+    model.temp_dyn = Constraint(model.periods, rule=temp_rule)#continuity for heat pump
+    model.hp_limit = Constraint(model.periods,rule=hp_limit_const)#limite la puissance faisable
+    model.temp_min=Constraint(model.periods, rule=temp_min_const) #on reste dans le range de Température voulue pour la maison
+    model.temp_max= Constraint(model.periods, rule=temp_max_const)#on reste dans le range de Température voulue pour la maison
+
+    #gen
+    model.gen_limit = Constraint(model.periods, rule=gen_limit_const)#limite la puissance faisable
+
     return model
+
+def optimization(model, t):
+    return (model.P_imp[t]+ model.P_pv[t] + model.P_gen[t] + model.P_discharge_bss[t]+ model.P_discharge_ev[t]
+        == model.P_exp[t]+ model.P_charge_bss[t]+model.P_charge_ev[t]+ model.P_load[t]+model.P_hp_hot[t]+ model.P_hp_cold[t])
+#battery
+def soc_bss_cont(model, t):
+    if t == 0:
+        return model.SOC_bss[t] == model.SOC_0_bss*model.C_bss
+    else:
+        return model.SOC_bss[t] == model.SOC_bss[t-1] + delta_t*(eff_bss * model.P_charge_bss[t]-model.P_discharge_bss[t] / eff_bss)
+def soc_ev_min_const(model, t):
+    return  model.SOC_bss[t] >= SOC_min_bss* model.C_bss 
+def soc_bss_max_const(model, t): 
+    return model.SOC_bss[t] <= SOC_max_bss*model.C_bss 
+def charge_bss_limit_const (model, t): 
+    return model.P_charge_bss[t] <= model.P_nom_bss
+def discharge_bss_limit_const (model, t):
+    return model.P_discharge_bss[t] <=model.P_nom_bss
+
+#pv
+def pv_limit_const (model, t):  
+    return model.P_pv[t]<= model.P_pv_max[t] 
+
+    
+#ev
+def soc_ev_const(model,t): 
+    if t == 0:
+        return model.SOC_ev[t] == model.SOC_0_ev
+    else: 
+        return model.SOC_ev[t] == model.SOC_ev[t-1] + delta_t * (eff_ev * model.P_charge_ev[t]-model.P_discharge_ev[t] / eff_ev)
+    
+def soc_ev_min_const(model,t): 
+    return model.SOC_ev[t] >= SOC_min_ev* model.C_ev
+
+def soc_ev_max_const(model,t): 
+    return model.SOC_ev[t] <= SOC_max_ev*model.C_ev
+def ev_charge_ev_limit_const(model,t): 
+    return model.P_charge_ev[t] <= model.P_nom_ev * model.EV_connected[t]
+def discharge_ev_limit_const(model,t):  
+    return model.P_discharge_ev[t] <= model.P_nom_ev * model.EV_connected[t]
+    
+#hp
+def temp_rule(model, t):
+        if t == 0:
+            return model.T_hp[t] == model.T_0_hp
+        else:
+            return model.T_hp[t] ==model.T_hp[t-1] + delta_t*(COP_hp*(model.P_hp_hot[t]- model.P_hp_cold[t])- model.P_loss[t])/C_hp
+        
+#hp    
+def hp_limit_const(model, t): 
+    return model.P_hp_hot[t]+model.P_hp_cold[t] <= model.P_nom_hp
+
+def temp_min_const(model, t):
+    return model.T_hp[t] >= model.T_set[t] - delta_T_max
+    
+def temp_max_const(model, t): 
+    return model.T_hp[t] <= model.T_set[t] + delta_T_max
+
+#gen
+def gen_limit_const(model, t): 
+    return model.P_gen[t] <= model.P_max_gen
+
+
 
 def run(model, results):
     model, results = utils.solve_model(model, results)
@@ -88,3 +189,4 @@ if __name__ == "__main__":
     results = utils.Results(start_time, n_days, yearly_kwh=0, yearly_km=0)      # Initialize results object with start time and number of days, yearly consumption and km driven
     model = create_model(results)
     run(model, results)
+    

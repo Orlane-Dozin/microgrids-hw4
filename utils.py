@@ -7,16 +7,19 @@ from param import *
 def check_res(res):
     eps = 1e-3  # 1 W or .1% error tolerance
     for t in range(len(res.t)):
-        0=0
+        #0=0
         # TODO: Make a function that test if the physical constraitns are indead respected
+        print("test")
     return
 
 def print_res(res):
     # TODO: Make a function to print a summary of the results
+    print("test")
     return
 
 def print_sizing_results(res):
     # TODO: Add a print with additional info specific to part 2
+    print("test")
     return
 
 
@@ -28,7 +31,7 @@ def plot_res(res):
 def solve_model(m, res):
     # Solve the optimization problem
     solver = SolverFactory('gurobi')
-    output = solver.solve(m)#, tee=True)  # Parameter 'tee=True' prints the solver output
+    output = solver.solve(m, tee=True)  # Parameter 'tee=True' prints the solver output
 
     # Print elapsed time
     status = output.solver.status
